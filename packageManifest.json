@@ -1,0 +1,21 @@
+{
+  "packageName": "Hubitat Device Health",
+  "author": "Ilia Gilderman",
+  "version": "1.0.0",
+  "minimumHEVersion": "2.3.0",
+  "dateReleased": "2026-09-08",
+  "documentationLink": "https://github.com/gilderman/HubitatDeviceHealth#readme",
+  "licenseFile": "https://raw.githubusercontent.com/gilderman/HubitatDeviceHealth/refs/heads/main/LICENSE",
+  "releaseNotes": "Initial release: Z-Wave and Zigbee device health monitor with Loki, snooze, and Hubitat notifications.",
+  "apps": [
+    {
+      "id": "e29f5241-23cc-4c1e-86c4-b2b2c4ca1a06",
+      "name": "Hubitat Device Health",
+      "namespace": "gilderman",
+      "location": "https://raw.githubusercontent.com/gilderman/HubitatDeviceHealth/refs/heads/main/apps/HubitatDeviceHealth.groovy",
+      "required": true,
+      "oauth": false,
+      "primary": true
+    }
+  ]
+}
