@@ -102,48 +102,135 @@ def configPage() {
     }
 }
 
-def statusPage() {
-    dynamicPage(name: "statusPage", title: "Device Health Status", install: false, uninstall: false) {
-        section("") {
+def statusPage(params) {
+    consumeStatusParams(params)
+    def rows = statusListRows()
+    syncActionEnums(rows)
+    rows = statusListRows()
+    dynamicPage(name: "statusPage", title: "Device Health", install: false, uninstall: false) {
+        section("Settings") {
             href(
                 name: "toConfig",
-                title: "Back to settings",
+                title: "App settings",
                 page: "configPage",
                 description: "Loki, timeouts, exclude, notifications"
             )
-            input "pollNowStatusButton", "button", title: "Poll Now"
+            href(
+                name: "pollNowStatus",
+                title: "Poll now",
+                page: "statusPage",
+                params: [poll: "1"],
+                description: "Re-read last-heard times from the hub"
+            )
         }
 
         def summary = state.lastSummary ?: [:]
-        section("Last poll") {
-            paragraph "Checked: ${summary.checked ?: 0}  ·  Alive: ${summary.alive ?: 0}  ·  Dead: ${summary.dead ?: 0}  ·  Snoozed: ${summary.snoozed ?: 0}"
-            paragraph "Last run: ${summary.at ?: "never"}"
+        section("") {
+            paragraph statusHeading("Last poll")
+            paragraph "Checked ${summary.checked ?: 0}, alive ${summary.alive ?: 0}, dead ${summary.dead ?: 0}, snoozed ${summary.snoozed ?: 0}."
+            paragraph "Ran ${summary.at ?: "never"}."
         }
 
-        def rows = statusProblemRows(state.lastDevices)
-        section("Dead / snoozed") {
-            paragraph "Dead = age older than timeout, Z-Wave FAILED/DEAD, or never heard. nodeState=OK is not a ping."
+        section("") {
+            paragraph statusHeading("Devices")
+            paragraph "A device is dead when last-heard is older than its timeout, Z-Wave reports FAILED/DEAD, or it was never heard. ${statusTimeoutLegend()}"
+            paragraph "The name opens the device page. Snooze hides alerts for 4 hours, 1 day, or 7 days. Forever ignores it (no poll, Loki, or alert). Off turns that off."
             if (!rows) {
-                paragraph "No dead or snoozed devices."
+                paragraph "No dead, snoozed, or ignored devices."
             } else {
-                paragraph statusTableHtml(rows)
-                paragraph "<b>Snooze</b> — one row per device, same order as the table."
-                paragraph(width: 2, "<b>Device id</b>")
-                paragraph(width: 6, "<b>Name</b>")
-                paragraph(width: 1, "<b>1h</b>")
-                paragraph(width: 1, "<b>24h</b>")
-                paragraph(width: 1, "<b>7d</b>")
-                paragraph(width: 1, "<b>Clear</b>")
                 rows.each { row ->
-                    paragraph(width: 2, htmlEscape(statusDeviceId(row)))
-                    paragraph(width: 6, htmlEscape(row.name))
-                    statusSnoozeButtons(row).each { btn ->
-                        input btn.name, "button", title: btn.title, width: 1
-                    }
+                    statusDeviceControls(row)
                 }
             }
         }
     }
+}
+
+def statusHeading(text) {
+    return "<div style='font-weight:700;font-size:16px;margin:4px 0'>${htmlEscape(text)}</div>"
+}
+
+def statusControlTitle(row) {
+    def view = statusDisplayRow(row)
+    return "${statusDeviceId(view)}  ${view.name ?: ""}".trim()
+}
+
+def statusControlDescription(row) {
+    def vals = statusTableValues(row)
+    return "${vals[2]}  ·  ${vals[3]}  ·  ${vals[4]}  ·  ${vals[5]}"
+}
+
+def actionSettingName(row) {
+    return "act_${buttonKey(row?.protocol, row?.keyId)}".toString()
+}
+
+def actionOptions() {
+    return [
+        "off"    : "Off",
+        "4h"     : "4 hours",
+        "1d"     : "1 day",
+        "7d"     : "7 days",
+        "forever": "Forever"
+    ]
+}
+
+def currentAction(row) {
+    def key = deviceKey(row.protocol, row.keyId)
+    if (isIgnored(key)) return "forever"
+    if (isSnoozed(key)) {
+        def stored = state.snoozeAction?.get(key.toString())
+        if (stored) return stored.toString()
+        return "1d"
+    }
+    return "off"
+}
+
+def actionHours(value) {
+    if (value == "4h") return 4
+    if (value == "1d") return 24
+    if (value == "7d") return 168
+    return null
+}
+
+def statusStatusColor(row) {
+    def status = statusDisplayRow(row).status
+    if (status == "ignored") return "#6a1b9a"
+    if (status == "snoozed") return "#ef6c00"
+    if (status == "dead") return "#c62828"
+    return "#555"
+}
+
+def statusRowHtml(row) {
+    def title = htmlEscape(statusControlTitle(row))
+    def desc = htmlEscape(statusControlDescription(row))
+    def color = statusStatusColor(row)
+    def devUrl = statusDeviceHref(row)
+    def nameHtml = devUrl ? "<a href='${htmlEscape(devUrl)}' style='color:#1565c0;text-decoration:none;font-weight:600'>${title}</a>" : "<span style='font-weight:600'>${title}</span>"
+    return "<div style='margin:0 0 4px 0'>${nameHtml}<br><span style='color:${color};font-size:12px'>${desc}</span></div>"
+}
+
+def statusOneLine(row) {
+    return "${statusControlTitle(row)}  ·  ${statusControlDescription(row)}"
+}
+
+def statusDeviceControls(row) {
+    def devUrl = statusDeviceHref(row)
+    def btn = buttonKey(row.protocol, row.keyId)
+    def link = [
+        name : "openDev_${btn}",
+        title: statusOneLine(row),
+        width: 6
+    ]
+    if (devUrl) link.url = devUrl
+    href(link)
+    paragraph " ", width: 1
+    input actionSettingName(row), "enum",
+        title: "Snooze",
+        options: actionOptions(),
+        width: 1,
+        submitOnChange: true,
+        defaultValue: currentAction(row)
+    paragraph " ", width: 4
 }
 
 def statusHrefDescription() {
@@ -154,9 +241,24 @@ def statusHrefDescription() {
 
 def statusProblemRows(devices) {
     def rows = (devices ?: []).findAll { row ->
-        row.status == "dead" || row.status == "snoozed"
+        def key = deviceKey(row.protocol, row.keyId)
+        row.status == "dead" || row.status == "snoozed" || row.status == "ignored" || isIgnored(key)
     }
     return rows.sort { a, b -> (a.name ?: "").toLowerCase() <=> (b.name ?: "").toLowerCase() }
+}
+
+def statusListRows() {
+    def out = []
+    def seen = [] as Set
+    statusProblemRows(state.lastDevices).each { row ->
+        def key = deviceKey(row.protocol, row.keyId)
+        if (seen.add(key)) out << row
+    }
+    ignoredDeviceRows().each { row ->
+        def key = deviceKey(row.protocol, row.keyId)
+        if (seen.add(key)) out << row
+    }
+    return out.sort { a, b -> (a.name ?: "").toLowerCase() <=> (b.name ?: "").toLowerCase() }
 }
 
 def statusDeviceId(row) {
@@ -164,58 +266,481 @@ def statusDeviceId(row) {
 }
 
 def statusTableColumns() {
-    return ["Device id", "Name", "Protocol", "Node", "Status", "Last heard", "Age / timeout", "Why", "Actions"]
+    return ["Id", "Name", "Status", "Heard", "Age / timeout", "Why", "Ignore"]
+}
+
+def statusTimeoutLegend() {
+    def listen = (settings.zwaveListeningHours ?: 4)
+    def sleepy = (settings.zwaveSleepyHours ?: 36)
+    def zig = (settings.zigbeeHours ?: 24)
+    return "Age / timeout uses Timeouts on the settings page: listening Z-Wave ${listen}h (mains), sleepy Z-Wave ${sleepy}h (battery), Zigbee ${zig}h."
+}
+
+def timeoutKind(row) {
+    if (row?.protocol == "zigbee") return "zigbee"
+    return truthy(row?.listening) ? "listening Z-Wave" : "sleepy Z-Wave"
+}
+
+def statusWhyShort(row) {
+    if (isFailedNode(row.nodeState)) return "Z-Wave ${row.nodeState}"
+    if (row.ageSec == null) return "Never heard"
+    if (row.timeoutSec != null && row.ageSec > row.timeoutSec) {
+        return "Past ${timeoutKind(row)} timeout (setting)"
+    }
+    return (row.status ?: "").toString()
+}
+
+def formatHeard(ts) {
+    if (!ts) return "unknown"
+    def matcher = ts.toString() =~ /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/
+    if (matcher.find()) return "${matcher.group(2)}-${matcher.group(3)} ${matcher.group(4)}:${matcher.group(5)}"
+    return ts.toString()
+}
+
+def statusDisplayRow(row) {
+    def out = [:] + row
+    def key = deviceKey(row.protocol, row.keyId)
+    if (isIgnored(key)) {
+        out.status = "ignored"
+    } else if (isSnoozed(key)) {
+        out.status = "snoozed"
+    }
+    return out
+}
+
+def statusAgeSec(row) {
+    if (row?.ageSec != null) {
+        try {
+            return row.ageSec.toLong()
+        } catch (ignored) {
+        }
+    }
+    def heardMs = resolveHeardMs(row)
+    if (heardMs == null) return null
+    return Math.max(0, ((now() - heardMs) / 1000).toLong())
 }
 
 def statusTableValues(row) {
-    def node = row.nodeId ? row.nodeId.toString() : "—"
-    def why = deadReason(row)
-    def snoozeNote = snoozeUntilText(deviceKey(row.protocol, row.keyId))
+    def view = statusDisplayRow(row)
+    def node = view.nodeId ? view.nodeId.toString() : "—"
+    def mesh = "${view.protocol ?: ""} ${node}".trim()
+    def why = statusWhyShort(view)
+    def snoozeNote = compactSnoozeUntil(deviceKey(view.protocol, view.keyId))
     if (snoozeNote) why = "${why} · ${snoozeNote}"
+    def age = "${formatAge(statusAgeSec(view))} / ${formatAge(view.timeoutSec)}"
+    def name = view.name ? "${view.name} (${mesh})" : mesh
+    def ignored = isIgnored(deviceKey(view.protocol, view.keyId)) ? "on" : ""
     return [
-        statusDeviceId(row),
-        (row.name ?: "").toString(),
-        (row.protocol ?: "").toString(),
-        node,
-        (row.status ?: "").toString(),
-        (row.lastHeard ?: "unknown").toString(),
-        "${formatAge(row.ageSec)} / ${formatAge(row.timeoutSec)}",
-        why
+        statusDeviceId(view),
+        name,
+        (view.status ?: "").toString(),
+        formatHeard(view.lastHeard),
+        age,
+        why,
+        ignored
     ]
+}
+
+def statusRowTitle(row) {
+    def vals = statusTableValues(row)
+    return "${vals[0]}  ${vals[1]}  ${vals[2]}  ${vals[3]}  ${vals[4]}"
+}
+
+def statusSnoozeOptions(rows) {
+    def opts = [:]
+    (rows ?: []).each { row ->
+        opts[deviceKey(row.protocol, row.keyId)] = statusRowTitle(row)
+    }
+    return opts
+}
+
+def currentSnoozedKeys(rows) {
+    return (rows ?: []).findAll { row ->
+        isSnoozed(deviceKey(row.protocol, row.keyId))
+    }.collect { row -> deviceKey(row.protocol, row.keyId) }
+}
+
+def ignoreSnapshot(row) {
+    return [
+        protocol: row.protocol,
+        keyId   : row.keyId,
+        name    : row.name,
+        deviceId: row.deviceId,
+        nodeId  : row.nodeId
+    ]
+}
+
+def copyIgnoreMap() {
+    def next = [:]
+    (state.ignore ?: [:]).each { key, snap ->
+        next[key.toString()] = snap
+    }
+    return next
+}
+
+def isIgnored(key) {
+    return copyIgnoreMap().containsKey(key?.toString())
+}
+
+def ignoredDeviceRows() {
+    def rows = []
+    copyIgnoreMap().each { key, snap ->
+        if (snap instanceof Map) {
+            rows << snap
+        } else {
+            def parts = key.toString().split(":", 2)
+            rows << [protocol: parts[0], keyId: parts.size() > 1 ? parts[1] : key, name: key]
+        }
+    }
+    return rows
+}
+
+def statusIgnoreOptionRows(problemRows) {
+    def out = []
+    def seen = [] as Set
+    (problemRows ?: []).each { row ->
+        def key = deviceKey(row.protocol, row.keyId)
+        if (seen.add(key)) out << row
+    }
+    ignoredDeviceRows().each { row ->
+        def key = deviceKey(row.protocol, row.keyId)
+        if (seen.add(key)) out << row
+    }
+    return out.sort { a, b -> (a.name ?: "").toLowerCase() <=> (b.name ?: "").toLowerCase() }
+}
+
+def statusIgnoreOptions(rows) {
+    def opts = [:]
+    (rows ?: []).each { row ->
+        opts[deviceKey(row.protocol, row.keyId)] = "${statusDeviceId(row)}  ${row.name ?: ""}".trim()
+    }
+    return opts
+}
+
+def currentIgnoredKeys() {
+    return copyIgnoreMap().keySet().collect { it.toString() }
+}
+
+def applyIgnore(row) {
+    def key = deviceKey(row.protocol, row.keyId)
+    def ignore = copyIgnoreMap()
+    ignore[key] = ignoreSnapshot(row)
+    state.ignore = ignore
+    clearSnooze(key)
+    log.info "Ignored ${key} forever"
+}
+
+def clearIgnore(key) {
+    def want = key.toString()
+    def ignore = [:]
+    copyIgnoreMap().each { k, snap ->
+        if (k != want) ignore[k] = snap
+    }
+    state.ignore = ignore
+    log.info "Cleared ignore for ${want}"
+}
+
+def selectedIgnoreKeys() {
+    def raw = settings?.statusIgnoredKeys
+    if (raw == null) return null
+    if (raw instanceof Collection) return raw.collect { it.toString() } as Set
+    return [raw.toString()] as Set
+}
+
+def syncIgnoreSelection(rows) {
+    def selected = selectedIgnoreKeys()
+    if (selected == null) {
+        state.ignoreEnumInited = true
+        return
+    }
+    if (!state.ignoreEnumInited && selected.isEmpty()) {
+        state.ignoreEnumInited = true
+        return
+    }
+    state.ignoreEnumInited = true
+    (rows ?: []).each { row ->
+        def key = deviceKey(row.protocol, row.keyId)
+        def want = selected.contains(key)
+        def have = isIgnored(key)
+        if (want && !have) applyIgnore(row)
+        else if (!want && have) clearIgnore(key)
+    }
+}
+
+def applyAction(row, value) {
+    def key = deviceKey(row.protocol, row.keyId)
+    def choice = (value ?: "off").toString()
+    if (choice == "forever") {
+        applyIgnore(row)
+        return
+    }
+    clearIgnore(key)
+    def hours = actionHours(choice)
+    if (hours == null) {
+        clearSnooze(key)
+        def acts = [:]
+        (state.snoozeAction ?: [:]).each { k, v ->
+            if (k.toString() != key) acts[k.toString()] = v
+        }
+        state.snoozeAction = acts
+        return
+    }
+    applySnooze(key, hours)
+    def acts = [:]
+    (state.snoozeAction ?: [:]).each { k, v ->
+        acts[k.toString()] = v
+    }
+    acts[key] = choice
+    state.snoozeAction = acts
+}
+
+def syncActionEnums(rows) {
+    def prev = [:]
+    (state.actionEnums ?: [:]).each { name, value ->
+        prev[name.toString()] = value?.toString()
+    }
+    def next = [:]
+    def changed = false
+    (rows ?: []).each { row ->
+        def name = actionSettingName(row)
+        def raw = settings[name]
+        def current = currentAction(row)
+        if (raw == null) {
+            next[name] = current
+            return
+        }
+        def want = raw.toString()
+        if (prev.containsKey(name)) {
+            if (want != prev[name]) {
+                applyAction(row, want)
+                changed = true
+            }
+        } else if (want != current) {
+            applyAction(row, want)
+            changed = true
+        }
+        next[name] = currentAction(row)
+    }
+    state.actionEnums = next
+    if (changed) refreshSnoozeDisplay()
+}
+
+def prevToggleMap(stored) {
+    def prev = [:]
+    (stored ?: [:]).each { name, checked ->
+        prev[name.toString()] = truthy(checked)
+    }
+    return prev
+}
+
+def syncSnoozeToggles(rows) {
+    def prev = prevToggleMap(state.snoozeToggles)
+    def next = [:]
+    def changed = false
+    (rows ?: []).each { row ->
+        def name = snoozeSettingName(row)
+        def key = deviceKey(row.protocol, row.keyId)
+        def checked = truthy(settings[name])
+        if (prev.containsKey(name)) {
+            def was = truthy(prev[name])
+            if (checked && !was) {
+                applySnooze(key, snoozeHours())
+                changed = true
+            } else if (!checked && was) {
+                clearSnooze(key)
+                changed = true
+            }
+        } else if (checked && !isSnoozed(key)) {
+            applySnooze(key, snoozeHours())
+            changed = true
+        }
+        next[name] = isSnoozed(key)
+    }
+    state.snoozeToggles = next
+    if (changed) refreshSnoozeDisplay()
+}
+
+def syncIgnoreToggles(rows) {
+    def prev = prevToggleMap(state.ignoreToggles)
+    def next = [:]
+    (rows ?: []).each { row ->
+        def name = ignoreSettingName(row)
+        def key = deviceKey(row.protocol, row.keyId)
+        def checked = truthy(settings[name])
+        if (prev.containsKey(name)) {
+            def was = truthy(prev[name])
+            if (checked && !was) applyIgnore(row)
+            else if (!checked && was) clearIgnore(key)
+        } else if (checked && !isIgnored(key)) {
+            applyIgnore(row)
+        }
+        next[name] = isIgnored(key)
+    }
+    state.ignoreToggles = next
 }
 
 def statusTableLine(row) {
     def vals = statusTableValues(row)
-    return "Device id ${vals[0]}  ·  ${vals[1]}  ·  ${vals[2]}  ·  node ${vals[3]}  ·  ${vals[4]}  ·  ${vals[5]}  ·  ${vals[6]}  ·  ${vals[7]}"
+    return "Device id ${vals[0]}  ·  ${vals[1]}  ·  ${vals[2]}  ·  ${vals[3]}  ·  ${vals[4]}  ·  ${vals[5]}  ·  ${vals[6]}"
+}
+
+def statusDeviceHref(row) {
+    def id = row?.deviceId
+    if (id == null || id.toString().trim() == "") return ""
+    return "/device/edit/${id.toString().trim()}"
+}
+
+def statusNameHtml(row) {
+    def view = statusDisplayRow(row)
+    def node = view.nodeId ? view.nodeId.toString() : "—"
+    def mesh = "${view.protocol ?: ""} ${node}".trim()
+    def label = view.name ? view.name.toString() : mesh
+    def href = statusDeviceHref(view)
+    def nameHtml = href ? "<a href='${htmlEscape(href)}' style='color:#1565c0;text-decoration:none'>${htmlEscape(label)}</a>" : htmlEscape(label)
+    if (view.name) nameHtml = "${nameHtml} <span style='color:#666'>(${htmlEscape(mesh)})</span>"
+    return nameHtml
 }
 
 def statusTableHtml(rows) {
-    def cell = "border:1px solid #666;padding:6px 8px;text-align:left;vertical-align:top"
+    def cell = "padding:8px 12px;text-align:left;vertical-align:middle;border-bottom:1px solid #ddd"
+    def nowrap = "${cell};white-space:nowrap"
+    def wrap = "${cell};white-space:normal;word-break:break-word"
     def sb = new StringBuilder()
-    sb << "<table style='width:100%;border-collapse:collapse;font-size:13px'>"
+    sb << "<div style='display:inline-block;max-width:100%'>"
+    sb << "<table style='width:auto!important;border-collapse:collapse;font-size:13px;line-height:1.35'>"
     sb << "<thead><tr>"
     statusTableColumns().each { name ->
-        sb << "<th style='${cell};background:#ddd'>${htmlEscape(name)}</th>"
+        sb << "<th style='${nowrap};border-bottom:2px solid #bbb;font-weight:600'>${htmlEscape(name)}</th>"
     }
     sb << "</tr></thead><tbody>"
     (rows ?: []).each { row ->
+        def vals = statusTableValues(row)
         sb << "<tr>"
-        statusTableValues(row).each { val ->
-            sb << "<td style='${cell}'>${htmlEscape(val)}</td>"
-        }
-        sb << "<td style='${cell};white-space:nowrap'>"
-        statusSnoozeButtons(row).each { btn ->
-            sb << "<button type='submit' name='${htmlEscape(btn.name)}' style='margin:0 3px 0 0'>${htmlEscape(btn.title)}</button>"
-        }
-        sb << "</td></tr>"
+        sb << "<td style='${nowrap}'>${htmlEscape(vals[0])}</td>"
+        sb << "<td style='${wrap};min-width:22em;max-width:28em'>${statusNameHtml(row)}</td>"
+        sb << "<td style='${nowrap}'>${htmlEscape(vals[2])}</td>"
+        sb << "<td style='${nowrap}'>${htmlEscape(vals[3])}</td>"
+        sb << "<td style='${nowrap}'>${htmlEscape(vals[4])}</td>"
+        sb << "<td style='${wrap};min-width:22em;max-width:36em'>${htmlEscape(vals[5])}</td>"
+        sb << "<td style='${nowrap}'>${htmlEscape(vals[6])}</td>"
+        sb << "</tr>"
     }
-    sb << "</tbody></table>"
+    sb << "</tbody></table></div>"
     return sb.toString()
 }
 
 def htmlEscape(val) {
     if (val == null) return ""
     return val.toString().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+}
+
+def snoozeQuery(action, protocol, keyId) {
+    return "?sz=${action}&p=${protocol}&k=${keyId}"
+}
+
+def consumeStatusParams(p) {
+    if (!p) return
+    if (p.poll == "1" || p.poll == 1) {
+        log.info "Manual device health poll"
+        pollDeviceHealth()
+        return
+    }
+    if (!p.sz || !p.p || !p.k) return
+    appButtonHandler("snooze_${p.sz}_${p.p}_${p.k}")
+}
+
+def snoozeSettingName(row) {
+    return "sz_${buttonKey(row?.protocol, row?.keyId)}".toString()
+}
+
+def ignoreSettingName(row) {
+    return "ig_${buttonKey(row?.protocol, row?.keyId)}".toString()
+}
+
+def snoozeHours() {
+    def raw = settings?.statusSnoozeHours?.toString()
+    if (raw == "1") return 1
+    if (raw == "168") return 168
+    return 24
+}
+
+def copySnoozeMap() {
+    def next = [:]
+    (state.snooze ?: [:]).each { key, untilMs ->
+        next[key.toString()] = untilMs
+    }
+    return next
+}
+
+def applySnooze(key, hours) {
+    def snooze = copySnoozeMap()
+    def untilMs = now() + (hours * 3600000L)
+    snooze[key.toString()] = untilMs
+    state.snooze = snooze
+    log.info "Snoozed ${key} for ${hours}h (until ${new Date(untilMs)})"
+}
+
+def clearSnooze(key) {
+    def want = key.toString()
+    def snooze = [:]
+    copySnoozeMap().each { k, untilMs ->
+        if (k != want) snooze[k] = untilMs
+    }
+    state.snooze = snooze
+    log.info "Cleared snooze for ${want}"
+}
+
+def writeEnumSetting(name, values) {
+    try {
+        app.updateSetting(name.toString(), [type: "enum", value: values ?: []])
+    } catch (Exception ignored) {
+    }
+}
+
+def selectedSnoozeKeys() {
+    def raw = settings?.statusSnoozedKeys
+    if (raw == null) return null
+    if (raw instanceof Collection) return raw.collect { it.toString() } as Set
+    return [raw.toString()] as Set
+}
+
+def refreshSnoozeDisplay() {
+    def devices = state.lastDevices
+    if (!devices) return
+    evaluateDevices(devices)
+    persistStatus(devices)
+}
+
+def syncSnoozeSelection(rows) {
+    pruneSnooze()
+    def selected = selectedSnoozeKeys()
+    if (selected == null) {
+        state.snoozeEnumInited = true
+        return
+    }
+    if (!state.snoozeEnumInited && selected.isEmpty()) {
+        state.snoozeEnumInited = true
+        return
+    }
+    state.snoozeEnumInited = true
+    def changed = false
+    (rows ?: []).each { row ->
+        def key = deviceKey(row.protocol, row.keyId)
+        def want = selected.contains(key)
+        def have = isSnoozed(key)
+        if (want && !have) {
+            applySnooze(key, snoozeHours())
+            changed = true
+        } else if (!want && have) {
+            clearSnooze(key)
+            changed = true
+        }
+    }
+    if (changed) refreshSnoozeDisplay()
+}
+
+def syncSnoozeCheckboxes(rows) {
+    syncSnoozeSelection(rows)
 }
 
 def statusSnoozeButtons(row) {
@@ -246,6 +771,7 @@ def uninstalled() {
 
 def initialize() {
     if (!state.snooze) state.snooze = [:]
+    if (!state.ignore) state.ignore = [:]
     if (state.prevDead == null) state.prevDead = []
     def minutes = pollMinutes()
     log.info "Device health poll every ${minutes} minute(s)"
@@ -268,20 +794,14 @@ def appButtonHandler(btn) {
         return
     }
     def key = deviceKey(parsed.protocol, parsed.keyId)
-    def snooze = state.snooze
-    if (!(snooze instanceof Map)) {
-        snooze = [:]
-        state.snooze = snooze
-    }
     if (parsed.action == "clear") {
-        snooze.remove(key)
-        log.info "Cleared snooze for ${key}"
+        clearSnooze(key)
+        refreshSnoozeDisplay()
         return
     }
     def hours = (parsed.action == "1h") ? 1 : ((parsed.action == "24h") ? 24 : 168)
-    def untilMs = now() + (hours * 3600000L)
-    snooze[key] = untilMs
-    log.info "Snoozed ${key} for ${hours}h (until ${new Date(untilMs)})"
+    applySnooze(key, hours)
+    refreshSnoozeDisplay()
 }
 
 def parseSnoozeButton(btn) {
@@ -316,16 +836,49 @@ def pollDeviceHealth() {
     runIn(pollMinutes() * 60, "pollDeviceHealth", [overwrite: true])
 }
 
+def parseHeardMs(ts) {
+    if (ts == null) return null
+    if (ts instanceof Number) return ts.toLong()
+    def raw = ts.toString().trim()
+    if (!raw) return null
+    def formats = ["yyyy-MM-dd'T'HH:mm:ssZ", "yyyy-MM-dd'T'HH:mm:ss.SSSZ", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss"]
+    def parsed = null
+    formats.each { fmt ->
+        if (parsed != null) return
+        try {
+            parsed = Date.parse(fmt, raw).time
+        } catch (ignored) {
+        }
+    }
+    return parsed
+}
+
+def resolveHeardMs(row) {
+    if (row == null) return null
+    if (row.heardMs != null) {
+        try {
+            return row.heardMs.toLong()
+        } catch (ignored) {
+        }
+    }
+    return parseHeardMs(row.lastHeard)
+}
+
 def evaluateDevices(devices) {
     def nowMs = now()
     devices.each { row ->
         def key = deviceKey(row.protocol, row.keyId)
         row.key = key
-        def heardMs = row.heardMs
-        row.ageSec = (heardMs != null) ? Math.max(0, ((nowMs - heardMs) / 1000).toLong()) : null
+        def heardMs = resolveHeardMs(row)
+        if (heardMs != null) {
+            row.heardMs = heardMs
+            row.ageSec = Math.max(0, ((nowMs - heardMs) / 1000).toLong())
+        } else if (row.ageSec == null) {
+            row.ageSec = null
+        }
         def failed = isFailedNode(row.nodeState)
         def timedOut = (row.ageSec != null && row.timeoutSec != null && row.ageSec > row.timeoutSec)
-        def noHeard = (heardMs == null)
+        def noHeard = (heardMs == null && row.ageSec == null)
         def dead = failed || timedOut || noHeard
         if (isSnoozed(key)) {
             row.status = "snoozed"
@@ -356,7 +909,7 @@ def deadCause(row) {
         return "Never heard"
     }
     if (row.timeoutSec != null && row.ageSec > row.timeoutSec) {
-        def kind = (row.protocol == "zigbee") ? "zigbee" : (truthy(row.listening) ? "listening" : "sleepy")
+        def kind = timeoutKind(row)
         def extra = row.nodeState ? " (nodeState=${row.nodeState} is not a ping)" : ""
         return "Age ${formatAge(row.ageSec)} > ${kind} timeout ${formatAge(row.timeoutSec)}${extra}"
     }
@@ -383,6 +936,7 @@ def persistStatus(devices) {
             nodeId     : row.nodeId,
             lastHeard  : row.lastHeard,
             lastActivity: row.lastActivity,
+            heardMs    : row.heardMs,
             ageSec     : row.ageSec,
             timeoutSec : row.timeoutSec,
             listening  : row.listening,
@@ -437,6 +991,10 @@ def collectZwaveDevices(zwaveJson, activityById, excludeIds) {
             logDebug "Excluded Z-Wave node ${nodeId} (device ${deviceId})"
             return
         }
+        if (isIgnored(deviceKey("zwave", nodeId))) {
+            logDebug "Ignored Z-Wave node ${nodeId}"
+            return
+        }
         def activity = deviceId ? activityById[deviceId.toString()] : null
         if (activity?.disabled) {
             logDebug "Skipping disabled Z-Wave node ${nodeId}"
@@ -484,6 +1042,10 @@ def collectZigbeeDevices(zigbeeJson, activityById, excludeIds) {
         if (deviceId == null) return
         if (excludeIds.contains(deviceId.toString())) {
             logDebug "Excluded Zigbee device ${deviceId}"
+            return
+        }
+        if (isIgnored(deviceKey("zigbee", deviceId))) {
+            logDebug "Ignored Zigbee device ${deviceId}"
             return
         }
         def activity = activityById[deviceId.toString()]
@@ -575,8 +1137,8 @@ def formatAge(ageSec) {
     def days = (s / 86400).toInteger()
     def hours = ((s % 86400) / 3600).toInteger()
     def mins = ((s % 3600) / 60).toInteger()
-    if (days > 0) return "${days}d ${hours}h"
-    if (hours > 0) return "${hours}h ${mins}m"
+    if (days > 0) return hours > 0 ? "${days}d ${hours}h" : "${days}d"
+    if (hours > 0) return mins > 0 ? "${hours}h ${mins}m" : "${hours}h"
     return "${mins}m"
 }
 
@@ -632,6 +1194,18 @@ def snoozeUntilText(key) {
         def ms = untilMs as Long
         if (ms <= now()) return ""
         return "Snoozed until ${new Date(ms)}"
+    } catch (ignored) {
+        return ""
+    }
+}
+
+def compactSnoozeUntil(key) {
+    def untilMs = state.snooze?.get(key?.toString())
+    if (untilMs == null) return ""
+    try {
+        def ms = untilMs as Long
+        if (ms <= now()) return ""
+        return "until ${formatHeard(new Date(ms).format("yyyy-MM-dd'T'HH:mm:ssZ"))}"
     } catch (ignored) {
         return ""
     }

@@ -4,38 +4,6 @@ Hubitat app that polls **Z-Wave** and **Zigbee** mesh devices, decides if each o
 
 LAN and virtual devices are ignored unless they appear in the hub's Z-Wave or Zigbee mesh JSON.
 
-The **app version** is `appVersion()` in the Groovy (`1.0.0`) and the same string in `packageManifest.json`. That is what you compare to GitHub. Hubitat’s internal save token (what `hubitat push` prints as `version=1`) is not a release number.
-
-## Developer lifecycle
-
-**Daily (no version bump)**
-
-1. Edit the Groovy in git.
-2. `hubitat push` from [hubitat-deploy](https://github.com/gilderman/hubitat-deploy) so the hub compiles this file.
-3. First time: `hubitat install` (or `hubitat push --install`) so the hub has a running user app, not only Apps Code.
-4. Confirm the app page still shows **App version 1.0.0** (or whatever `appVersion()` is).
-5. Commit and push to GitHub when you want the source saved — still the same `1.0.0`.
-
-GitHub `main` and the hub match when that `appVersion()` string is the same **and** you pushed that exact file. If you committed extra changes but did not `hubitat push`, GitHub is ahead.
-
-**Release (bump once)**
-
-1. Change `appVersion()` and `packageManifest.json` `"version"` to the same new string (e.g. `1.0.1`).
-2. Commit, tag `v1.0.1`, push GitHub.
-3. `hubitat push` so the hub app page shows `1.0.1`.
-4. HPM users then see `1.0.1` as the package version.
-
-Do not bump on every save. Bump when you mean “this is a shipped version.”
-
-Check hub vs git with hubitat-deploy (config lives in that repo’s `.hubitat.json`):
-
-```bash
-node path/to/hubitat-deploy/src/cli.js status --cwd path/to/hubitat-deploy apps/HubitatGrafanaDeviceHealth.groovy
-node path/to/hubitat-deploy/src/cli.js diff  --cwd path/to/hubitat-deploy apps/HubitatGrafanaDeviceHealth.groovy
-```
-
-`status` compares `appVersion()`, `packageManifest.json`, and source. Exit code 1 if they differ.
-
 ## Tests
 
 Specs for **this app** live here: [`tests/src/test/groovy`](tests/src/test/groovy). The Gradle runner and hubitat_ci library stay in [hubitat-deploy](https://github.com/gilderman/hubitat-deploy) (clone hubitat_ci once under `<workspace>/tools/hubitat_ci`). JDK 11 and Gradle 7.6.x must be on `PATH`.
@@ -84,11 +52,13 @@ Last-heard is the most recent of those four fields. The hub Z-Wave controller (`
 
 ## Exclude
 
-Use **Exclude these devices** to omit known-noisy or unused mesh devices. Excluded devices are not checked, not sent to Loki, and not alerted.
+Use **Exclude these devices** to omit known-noisy or unused mesh devices. The status page **Ignore** list does the same by mesh key (`zwave:37` / `zigbee:12`) without picking a Hubitat device. Either way, those devices are not checked, not sent to Loki, and not alerted.
 
 ## Status page
 
-**Dead / snoozed devices** is an HTML table: header row, then **one row per device**. Columns are Device id, Name, Protocol, Node, Status, Last heard, Age / timeout, Why, and Actions (1h / 24h / 7d / Clear). Hubitat `input` buttons are repeated under the table (same order, with device id) so snooze still works if the hub strips `<button>` tags inside the table.
+**Devices** lists dead, snoozed, and ignored devices together. The name is a link to `/device/edit/<id>` (it stays after snooze or ignore). Status text is colored: dead red, snoozed orange, ignored purple. **Snooze** is a narrow dropdown (Off, 4 hours, 1 day, 7 days, Forever). Forever means no poll, Loki, or alert.
+
+**Age > limit** is last-heard age vs the timeout for that device type. Listening (mains) Z-Wave default is **4 hours** (`Listening Z-Wave timeout` on the settings page). Sleepy/battery Z-Wave default is 36h; Zigbee is 24h.
 
 Snooze is stored in app state as `zwave:<nodeId>` or `zigbee:<deviceId>` until an epoch timestamp. Snoozed devices are not notified and appear as `status=snoozed` in Loki (`alive=0`).
 

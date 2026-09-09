@@ -70,8 +70,25 @@ class HubitatGrafanaDeviceHealthSpec extends Specification {
         expect:
             app.formatAge(null) == "unknown"
             app.formatAge(45) == "0m"
+            app.formatAge(4 * 3600) == "4h"
             app.formatAge(90 * 60) == "1h 30m"
             app.formatAge(2 * 86400 + 3 * 3600) == "2d 3h"
+    }
+
+    def "statusTimeoutLegend uses the Timeouts settings"() {
+        expect:
+            loadApp().statusTimeoutLegend().contains("listening Z-Wave 4h")
+            loadApp().statusTimeoutLegend().contains("sleepy Z-Wave 36h")
+            loadApp().statusTimeoutLegend().contains("Zigbee 24h")
+            loadApp([zwaveListeningHours: 6]).statusTimeoutLegend().contains("listening Z-Wave 6h")
+    }
+
+    def "formatHeard shortens ISO timestamps"() {
+        given:
+            def app = loadApp()
+        expect:
+            app.formatHeard("2026-09-08T01:00:04-0700") == "09-08 01:00"
+            app.formatHeard(null) == "unknown"
     }
 
     def "evaluateDevices marks recent heard as ok"() {
@@ -134,6 +151,18 @@ class HubitatGrafanaDeviceHealthSpec extends Specification {
             rows[0].listening == true
     }
 
+    def "collectZwaveDevices skips ignored mesh keys forever"() {
+        given:
+            def app = loadApp(state: [ignore: ["zwave:5": [protocol: "zwave", keyId: "5", name: "Switch"]]])
+            def zwaveJson = [
+                nodes    : [[nodeId: 5, lastTime: "2023-11-14T22:12:00", listening: true, nodeState: "OK", deviceName: "Switch"]],
+                zwDevices: ["5": [id: 100, displayName: "Switch"]]
+            ]
+        expect:
+            app.isIgnored("zwave:5")
+            app.collectZwaveDevices(zwaveJson, [:], [] as Set) == []
+    }
+
     def "deadReason explains timeout, FAILED, never heard, and snooze"() {
         given:
             def app = loadApp()
@@ -146,7 +175,7 @@ class HubitatGrafanaDeviceHealthSpec extends Specification {
             snoozed.status = "snoozed"
         then:
             app.deadReason(timedOut).contains("Age")
-            app.deadReason(timedOut).contains("listening timeout")
+            app.deadReason(timedOut).contains("listening Z-Wave timeout")
             app.deadReason(timedOut).contains("nodeState=OK is not a ping")
             app.deadReason(failed) == "Z-Wave nodeState=FAILED"
             app.deadReason(neverHeard) == "Never heard"
@@ -161,6 +190,7 @@ class HubitatGrafanaDeviceHealthSpec extends Specification {
             def lock = deviceRow(keyId: "8", name: "Back Lock", status: "snoozed")
         expect:
             app.statusProblemRows([alive, dining, lock])*.name == ["Back Lock", "Dining Room Fixture"]
+            loadApp(state: [ignore: ["zwave:17": [protocol: "zwave", keyId: "17"]]]).statusProblemRows([dining])*.name == ["Dining Room Fixture"]
             app.statusProblemRows([]) == []
             app.statusProblemRows(null) == []
     }
@@ -186,14 +216,11 @@ class HubitatGrafanaDeviceHealthSpec extends Specification {
         then:
             row.status == "dead"
             line.startsWith("Device id 292")
-            line.contains("Dining Room Fixture")
-            line.contains("zwave")
-            line.contains("node 17")
+            line.contains("Dining Room Fixture (zwave 17)")
             line.contains("dead")
-            line.contains("2026-09-08T01:00:04-0700")
-            line.contains("19h 25m / 4h 0m")
-            line.contains("Age 19h 25m > listening timeout 4h 0m")
-            line.contains("nodeState=OK is not a ping")
+            line.contains("09-08 01:00")
+            line.contains("19h 25m / 4h")
+            line.contains("Past listening Z-Wave timeout (setting)")
             !line.contains("Device id 17  ·")
     }
 
@@ -216,14 +243,30 @@ class HubitatGrafanaDeviceHealthSpec extends Specification {
         expect:
             html.contains("<table")
             html.contains("</table>")
-            app.statusTableColumns() == ["Device id", "Name", "Protocol", "Node", "Status", "Last heard", "Age / timeout", "Why", "Actions"]
-            html.contains("Device id")
-            html.contains("Actions")
+            html.contains("width:auto")
+            !html.contains("style='width:100%")
+            app.statusTableColumns() == ["Id", "Name", "Status", "Heard", "Age / timeout", "Why", "Ignore"]
+            html.contains(">Id<")
+            html.contains("Age / timeout")
+            html.contains(">Why<")
+            html.contains(">Ignore<")
+            html.contains("min-width:22em")
+            html.contains("max-width:28em")
+            html.contains("max-width:36em")
             html.contains(">50<")
             html.contains("Dining Room Fixture")
-            html.contains("name='snooze_1h_zwave_37'")
-            html.contains("name='snooze_clear_zwave_12'")
+            html.contains("/device/edit/50")
+            html.contains("/device/edit/143")
+            html.contains("<a href='/device/edit/50'")
+            !html.contains("type='submit'")
+            html.contains("listening Z-Wave")
             (html =~ /<tr>/).size() == 3
+    }
+
+    def "statusDeviceHref is the hub device page"() {
+        expect:
+            loadApp().statusDeviceHref(deviceRow(deviceId: 50)) == "/device/edit/50"
+            loadApp().statusDeviceHref(deviceRow(keyId: "9")) == ""
     }
 
     def "statusTableLine falls back to keyId when Hubitat device id is missing"() {
@@ -276,6 +319,286 @@ class HubitatGrafanaDeviceHealthSpec extends Specification {
         expect:
             loadApp(state: [:]).statusHrefDescription() == "No poll yet"
             loadApp(state: [lastSummary: [at: "now", dead: 2, snoozed: 1, checked: 10]]).statusHrefDescription() == "Dead 2 · Snoozed 1 · Checked 10"
+    }
+
+    def "status page keeps every device link and uses a narrow snooze dropdown"() {
+        given:
+            def src = APP.getText("UTF-8")
+            def start = src.indexOf("def statusPage")
+            def end = src.indexOf("def statusHrefDescription")
+            def page = src.substring(start, end)
+            def controls = src.substring(src.indexOf("def statusDeviceControls"), src.indexOf("def statusHrefDescription"))
+            def ignored = deviceRow(protocol: "zwave", keyId: "17", deviceId: 50, name: "Dining", status: "dead")
+            def app = loadApp(state: [ignore: ["zwave:17": [protocol: "zwave", keyId: "17", deviceId: 50, name: "Dining"]]])
+        expect:
+            page.contains("statusHeading(\"Devices\")")
+            page.contains("statusHeading(\"Last poll\")")
+            loadApp().statusHeading("Last poll").contains("<div")
+            loadApp().statusHeading("Last poll").contains("Last poll")
+            !page.contains("Ignored forever")
+            !page.contains("statusTableHtml")
+            controls.contains("statusOneLine")
+            controls.contains("title: \"Snooze\"")
+            controls.contains("width: 6")
+            controls.contains("width: 1")
+            controls.contains("width: 4")
+            !controls.contains("width: 2")
+            !controls.contains("width: 3")
+            !controls.contains("statusRowHtml")
+            app.statusOneLine(ignored).contains("Dining")
+            app.statusDeviceHref(ignored) == "/device/edit/50"
+            app.statusDisplayRow(ignored).status == "ignored"
+            app.statusListRows()*.name == ["Dining"]
+            loadApp().actionSettingName(deviceRow(protocol: "zwave", keyId: "37")) == "act_zwave_37"
+            loadApp().actionOptions().keySet() as List == ["off", "4h", "1d", "7d", "forever"]
+    }
+
+    def "snoozeHours reads the duration enum"() {
+        expect:
+            loadApp().snoozeHours() == 24
+            loadApp([statusSnoozeHours: "1"]).snoozeHours() == 1
+            loadApp([statusSnoozeHours: "168"]).snoozeHours() == 168
+    }
+
+    def "first status visit does not clear an existing snooze when the enum is unset"() {
+        given:
+            def row = deviceRow(protocol: "zwave", keyId: "17", status: "dead")
+            def stateMap = [snooze: ["zwave:17": NOW_MS + 3600_000L]]
+            def app = loadApp(state: stateMap)
+        when:
+            app.syncSnoozeSelection([row])
+        then:
+            app.isSnoozed("zwave:17")
+            stateMap.snoozeEnumInited == true
+    }
+
+    def "checking a snooze enum value snoozes that device and shows snoozed"() {
+        given:
+            def row = deviceRow(
+                protocol: "zwave",
+                keyId: "17",
+                deviceId: 50,
+                status: "dead",
+                heardMs: NOW_MS - 10 * 3600_000L,
+                lastHeard: "2026-09-08T01:00:04-0700",
+                timeoutSec: 4 * 3600,
+                nodeState: "OK"
+            )
+            def stateMap = [
+                snooze          : [:],
+                snoozeEnumInited: true,
+                lastDevices     : [row]
+            ]
+            def app = loadApp(state: stateMap, statusSnoozedKeys: ["zwave:17"], statusSnoozeHours: "1")
+        when:
+            app.syncSnoozeSelection([row])
+        then:
+            app.isSnoozed("zwave:17")
+            stateMap.lastDevices[0].status == "snoozed"
+            stateMap.lastSummary.snoozed == 1
+            app.statusTableValues(stateMap.lastDevices[0])[2] == "snoozed"
+            app.statusRowTitle(stateMap.lastDevices[0]).contains("snoozed")
+    }
+
+    def "first submitted check snoozes even when enum was never inited"() {
+        given:
+            def row = deviceRow(protocol: "zwave", keyId: "17", status: "dead")
+            def stateMap = [snooze: [:], lastDevices: [row]]
+            def app = loadApp(state: stateMap, statusSnoozedKeys: ["zwave:17"], statusSnoozeHours: "24")
+        when:
+            app.syncSnoozeSelection([row])
+        then:
+            app.isSnoozed("zwave:17")
+            stateMap.lastDevices[0].status == "snoozed"
+    }
+
+    def "unchecking a snooze enum value clears that device"() {
+        given:
+            def row = deviceRow(protocol: "zwave", keyId: "17", status: "dead")
+            def stateMap = [
+                snooze          : ["zwave:17": NOW_MS + 3600_000L],
+                snoozeEnumInited: true
+            ]
+            def app = loadApp(state: stateMap, statusSnoozedKeys: [])
+        when:
+            app.syncSnoozeSelection([row])
+        then:
+            !app.isSnoozed("zwave:17")
+    }
+
+    def "empty enum on first init does not wipe snooze"() {
+        given:
+            def row = deviceRow(protocol: "zwave", keyId: "17", status: "dead")
+            def stateMap = [snooze: ["zwave:17": NOW_MS + 3600_000L]]
+            def app = loadApp(state: stateMap, statusSnoozedKeys: [])
+        when:
+            app.syncSnoozeSelection([row])
+        then:
+            app.isSnoozed("zwave:17")
+    }
+
+    def "turning a Snooze bool on snoozes that device"() {
+        given:
+            def row = deviceRow(protocol: "zwave", keyId: "17", status: "dead")
+            def stateMap = [snooze: [:], actionEnums: ["act_zwave_17": "off"], lastDevices: [row]]
+            def app = loadApp(state: stateMap, act_zwave_17: "4h")
+        when:
+            app.syncActionEnums([row])
+        then:
+            app.isSnoozed("zwave:17")
+            !app.isIgnored("zwave:17")
+            app.currentAction(row) == "4h"
+            stateMap.lastDevices[0].status == "snoozed"
+            app.statusControlDescription(row).contains("snoozed")
+    }
+
+    def "snooze dropdown Forever ignores that device"() {
+        given:
+            def row = deviceRow(protocol: "zwave", keyId: "17", deviceId: 50, name: "Dining", status: "dead")
+            def stateMap = [ignore: [:], actionEnums: ["act_zwave_17": "off"], lastDevices: [row]]
+            def app = loadApp(state: stateMap, act_zwave_17: "forever")
+        when:
+            app.syncActionEnums([row])
+        then:
+            app.isIgnored("zwave:17")
+            app.currentAction(row) == "forever"
+            app.statusProblemRows(stateMap.lastDevices)*.name == ["Dining"]
+            app.statusRowHtml(row).contains("/device/edit/50")
+    }
+
+    def "snooze dropdown Off clears snooze and ignore"() {
+        given:
+            def row = deviceRow(protocol: "zwave", keyId: "17", name: "Dining", status: "dead")
+            def stateMap = [
+                snooze      : ["zwave:17": NOW_MS + 3600_000L],
+                ignore      : ["zwave:17": [protocol: "zwave", keyId: "17", name: "Dining"]],
+                actionEnums : ["act_zwave_17": "forever"]
+            ]
+            def app = loadApp(state: stateMap, act_zwave_17: "off")
+        when:
+            app.syncActionEnums([row])
+        then:
+            !app.isSnoozed("zwave:17")
+            !app.isIgnored("zwave:17")
+            app.currentAction(row) == "off"
+    }
+
+    def "turning an Ignore bool on drops that device forever"() {
+        given:
+            def row = deviceRow(protocol: "zwave", keyId: "17", deviceId: 50, name: "Dining", status: "dead")
+            def stateMap = [ignore: [:], ignoreToggles: ["ig_zwave_17": false], lastDevices: [row]]
+            def app = loadApp(state: stateMap, ig_zwave_17: true)
+        when:
+            app.syncIgnoreToggles([row])
+        then:
+            app.isIgnored("zwave:17")
+            app.statusProblemRows(stateMap.lastDevices)*.name == ["Dining"]
+    }
+
+    def "checking ignore drops that device forever and keeps it off the dead table"() {
+        given:
+            def row = deviceRow(protocol: "zwave", keyId: "17", deviceId: 50, name: "Dining", status: "dead")
+            def stateMap = [ignore: [:], ignoreEnumInited: true, lastDevices: [row]]
+            def app = loadApp(state: stateMap, statusIgnoredKeys: ["zwave:17"])
+        when:
+            app.syncIgnoreSelection([row])
+        then:
+            app.isIgnored("zwave:17")
+            app.statusProblemRows(stateMap.lastDevices)*.name == ["Dining"]
+            app.currentIgnoredKeys() == ["zwave:17"]
+            app.statusTableValues(row)[6] == "on"
+            app.statusIgnoreOptions(app.statusIgnoreOptionRows([]))["zwave:17"].contains("Dining")
+    }
+
+    def "unchecking ignore watches that device again"() {
+        given:
+            def row = deviceRow(protocol: "zwave", keyId: "17", name: "Dining", status: "dead")
+            def stateMap = [
+                ignore          : ["zwave:17": [protocol: "zwave", keyId: "17", name: "Dining"]],
+                ignoreEnumInited: true
+            ]
+            def app = loadApp(state: stateMap, statusIgnoredKeys: [])
+        when:
+            app.syncIgnoreSelection([row])
+        then:
+            !app.isIgnored("zwave:17")
+    }
+
+    def "statusDisplayRow and snooze options show snoozed in the table"() {
+        given:
+            def app = loadApp(state: [snooze: ["zwave:17": NOW_MS + 3600_000L]])
+            def row = deviceRow(protocol: "zwave", keyId: "17", deviceId: 50, name: "Dining", status: "dead")
+            def opts = app.statusSnoozeOptions([row])
+        expect:
+            app.statusDisplayRow(row).status == "snoozed"
+            app.statusTableValues(row)[2] == "snoozed"
+            opts["zwave:17"].contains("snoozed")
+            opts["zwave:17"].contains("Dining")
+            app.currentSnoozedKeys([row]) == ["zwave:17"]
+    }
+
+    def "age is computed from lastHeard when heardMs was not persisted"() {
+        given:
+            def app = loadApp()
+            def row = deviceRow(
+                protocol: "zwave",
+                keyId: "37",
+                name: "Dining Room Fixture",
+                status: "dead",
+                lastHeard: "2023-11-14T12:13:20+0000",
+                timeoutSec: 4 * 3600,
+                nodeState: "OK"
+            )
+            row.heardMs = null
+            row.ageSec = null
+        when:
+            app.evaluateDevices([row])
+            def vals = app.statusTableValues(row)
+        then:
+            row.heardMs != null
+            row.ageSec != null
+            !vals[4].startsWith("unknown")
+            vals[4].contains("/ 4h")
+    }
+
+    def "persistStatus keeps heardMs so a later evaluate does not wipe age"() {
+        given:
+            def stateMap = [:]
+            def app = loadApp(state: stateMap)
+            def row = deviceRow(
+                keyId: "17",
+                deviceId: 292,
+                heardMs: NOW_MS - 10 * 3600_000L,
+                lastHeard: "2026-09-08T01:00:04-0700",
+                timeoutSec: 4 * 3600,
+                nodeState: "OK"
+            )
+        when:
+            app.evaluateDevices([row])
+            app.persistStatus([row])
+            def stored = stateMap.lastDevices[0]
+            stored.ageSec = null
+            stored.heardMs = stored.heardMs
+            app.evaluateDevices([stored])
+        then:
+            stored.heardMs == NOW_MS - 10 * 3600_000L
+            stored.ageSec == 10 * 3600L
+            stateMap.lastDevices[0].heardMs == NOW_MS - 10 * 3600_000L
+    }
+
+    def "consumeStatusParams snoozes from a short sz query"() {
+        given:
+            def stateMap = [snooze: [:]]
+            def app = loadApp(state: stateMap)
+        when:
+            app.consumeStatusParams([sz: "1h", p: "zwave", k: "17"])
+        then:
+            app.isSnoozed("zwave:17")
+    }
+
+    def "snoozeQuery is a short query string"() {
+        expect:
+            loadApp().snoozeQuery("1h", "zwave", "37") == "?sz=1h&p=zwave&k=37"
     }
 
     def "parseSnoozeButton reads the table action names"() {
@@ -355,6 +678,11 @@ class HubitatGrafanaDeviceHealthSpec extends Specification {
             now() >> NOW_MS
             getLog() >> log
             getState() >> stateMap
+            updateSetting(*_) >> { Object[] callArgs ->
+                def name = callArgs[0]?.toString()
+                def val = callArgs.size() > 1 ? callArgs[1] : null
+                settings[name] = (val instanceof Map) ? val.value : val
+            }
         }
         return new HubitatAppSandbox(APP).compile(
             api: api,
