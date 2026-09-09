@@ -120,29 +120,26 @@ def statusPage() {
             paragraph "Last run: ${summary.at ?: "never"}"
         }
 
-        def rows = (state.lastDevices ?: []).findAll { row ->
-            row.status == "dead" || row.status == "snoozed"
-        }
-        if (!rows) {
-            section("Dead / snoozed") {
+        def rows = statusProblemRows(state.lastDevices)
+        section("Dead / snoozed") {
+            paragraph "Dead = age older than timeout, Z-Wave FAILED/DEAD, or never heard. nodeState=OK is not a ping."
+            if (!rows) {
                 paragraph "No dead or snoozed devices."
-            }
-        } else {
-            rows.sort { a, b -> (a.name ?: "").toLowerCase() <=> (b.name ?: "").toLowerCase() }
-            rows.each { row ->
-                def key = deviceKey(row.protocol, row.keyId)
-                def btn = buttonKey(row.protocol, row.keyId)
-                def heard = row.lastHeard ?: "unknown"
-                def age = formatAge(row.ageSec)
-                def snoozeNote = snoozeUntilText(key)
-                section("${row.name} (${row.protocol})") {
-                    paragraph "Status: ${row.status}  ·  Last heard: ${heard}  ·  Age: ${age}  ·  Timeout: ${formatAge(row.timeoutSec)}"
-                    if (row.nodeState) paragraph "nodeState=${row.nodeState}  listening=${row.listening}"
-                    if (snoozeNote) paragraph snoozeNote
-                    input "snooze_1h_${btn}", "button", title: "Snooze 1h", width: 3
-                    input "snooze_24h_${btn}", "button", title: "Snooze 24h", width: 3
-                    input "snooze_7d_${btn}", "button", title: "Snooze 7d", width: 3
-                    input "snooze_clear_${btn}", "button", title: "Clear snooze", width: 3
+            } else {
+                paragraph statusTableHtml(rows)
+                paragraph "<b>Snooze</b> — one row per device, same order as the table."
+                paragraph(width: 2, "<b>Device id</b>")
+                paragraph(width: 6, "<b>Name</b>")
+                paragraph(width: 1, "<b>1h</b>")
+                paragraph(width: 1, "<b>24h</b>")
+                paragraph(width: 1, "<b>7d</b>")
+                paragraph(width: 1, "<b>Clear</b>")
+                rows.each { row ->
+                    paragraph(width: 2, htmlEscape(statusDeviceId(row)))
+                    paragraph(width: 6, htmlEscape(row.name))
+                    statusSnoozeButtons(row).each { btn ->
+                        input btn.name, "button", title: btn.title, width: 1
+                    }
                 }
             }
         }
@@ -153,6 +150,82 @@ def statusHrefDescription() {
     def summary = state.lastSummary ?: [:]
     if (!summary.at) return "No poll yet"
     return "Dead ${summary.dead ?: 0} · Snoozed ${summary.snoozed ?: 0} · Checked ${summary.checked ?: 0}"
+}
+
+def statusProblemRows(devices) {
+    def rows = (devices ?: []).findAll { row ->
+        row.status == "dead" || row.status == "snoozed"
+    }
+    return rows.sort { a, b -> (a.name ?: "").toLowerCase() <=> (b.name ?: "").toLowerCase() }
+}
+
+def statusDeviceId(row) {
+    return (row?.deviceId ?: row?.keyId ?: "—").toString()
+}
+
+def statusTableColumns() {
+    return ["Device id", "Name", "Protocol", "Node", "Status", "Last heard", "Age / timeout", "Why", "Actions"]
+}
+
+def statusTableValues(row) {
+    def node = row.nodeId ? row.nodeId.toString() : "—"
+    def why = deadReason(row)
+    def snoozeNote = snoozeUntilText(deviceKey(row.protocol, row.keyId))
+    if (snoozeNote) why = "${why} · ${snoozeNote}"
+    return [
+        statusDeviceId(row),
+        (row.name ?: "").toString(),
+        (row.protocol ?: "").toString(),
+        node,
+        (row.status ?: "").toString(),
+        (row.lastHeard ?: "unknown").toString(),
+        "${formatAge(row.ageSec)} / ${formatAge(row.timeoutSec)}",
+        why
+    ]
+}
+
+def statusTableLine(row) {
+    def vals = statusTableValues(row)
+    return "Device id ${vals[0]}  ·  ${vals[1]}  ·  ${vals[2]}  ·  node ${vals[3]}  ·  ${vals[4]}  ·  ${vals[5]}  ·  ${vals[6]}  ·  ${vals[7]}"
+}
+
+def statusTableHtml(rows) {
+    def cell = "border:1px solid #666;padding:6px 8px;text-align:left;vertical-align:top"
+    def sb = new StringBuilder()
+    sb << "<table style='width:100%;border-collapse:collapse;font-size:13px'>"
+    sb << "<thead><tr>"
+    statusTableColumns().each { name ->
+        sb << "<th style='${cell};background:#ddd'>${htmlEscape(name)}</th>"
+    }
+    sb << "</tr></thead><tbody>"
+    (rows ?: []).each { row ->
+        sb << "<tr>"
+        statusTableValues(row).each { val ->
+            sb << "<td style='${cell}'>${htmlEscape(val)}</td>"
+        }
+        sb << "<td style='${cell};white-space:nowrap'>"
+        statusSnoozeButtons(row).each { btn ->
+            sb << "<button type='submit' name='${htmlEscape(btn.name)}' style='margin:0 3px 0 0'>${htmlEscape(btn.title)}</button>"
+        }
+        sb << "</td></tr>"
+    }
+    sb << "</tbody></table>"
+    return sb.toString()
+}
+
+def htmlEscape(val) {
+    if (val == null) return ""
+    return val.toString().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+}
+
+def statusSnoozeButtons(row) {
+    def btn = buttonKey(row.protocol, row.keyId)
+    return [
+        [name: "snooze_1h_${btn}", title: "1h"],
+        [name: "snooze_24h_${btn}", title: "24h"],
+        [name: "snooze_7d_${btn}", title: "7d"],
+        [name: "snooze_clear_${btn}", title: "Clear"]
+    ]
 }
 
 def installed() {
@@ -189,25 +262,37 @@ def appButtonHandler(btn) {
         pollDeviceHealth()
         return
     }
-    def matcher = (btn =~ /^snooze_(1h|24h|7d|clear)_(zwave|zigbee)_(\d+)$/)
-    if (!matcher.find()) {
+    def parsed = parseSnoozeButton(btn)
+    if (!parsed) {
         logDebug "Unhandled button: ${btn}"
         return
     }
-    def action = matcher.group(1)
-    def protocol = matcher.group(2)
-    def keyId = matcher.group(3)
-    def key = deviceKey(protocol, keyId)
-    if (!state.snooze) state.snooze = [:]
-    if (action == "clear") {
-        state.snooze.remove(key)
+    def key = deviceKey(parsed.protocol, parsed.keyId)
+    def snooze = state.snooze
+    if (!(snooze instanceof Map)) {
+        snooze = [:]
+        state.snooze = snooze
+    }
+    if (parsed.action == "clear") {
+        snooze.remove(key)
         log.info "Cleared snooze for ${key}"
         return
     }
-    def hours = (action == "1h") ? 1 : ((action == "24h") ? 24 : 168)
+    def hours = (parsed.action == "1h") ? 1 : ((parsed.action == "24h") ? 24 : 168)
     def untilMs = now() + (hours * 3600000L)
-    state.snooze[key] = untilMs
+    snooze[key] = untilMs
     log.info "Snoozed ${key} for ${hours}h (until ${new Date(untilMs)})"
+}
+
+def parseSnoozeButton(btn) {
+    if (btn == null) return null
+    def matcher = btn.toString() =~ /^snooze_(1h|24h|7d|clear)_(zwave|zigbee)_(\d+)$/
+    if (!matcher.matches()) return null
+    return [
+        action  : matcher.group(1),
+        protocol: matcher.group(2),
+        keyId   : matcher.group(3)
+    ]
 }
 
 def pollDeviceHealth() {
@@ -253,6 +338,29 @@ def evaluateDevices(devices) {
             row.alive = 1
         }
     }
+}
+
+def deadReason(row) {
+    def cause = deadCause(row)
+    if (row.status == "snoozed") {
+        return cause ? "Snoozed · ${cause}" : "Snoozed"
+    }
+    return cause
+}
+
+def deadCause(row) {
+    if (isFailedNode(row.nodeState)) {
+        return "Z-Wave nodeState=${row.nodeState}"
+    }
+    if (row.ageSec == null) {
+        return "Never heard"
+    }
+    if (row.timeoutSec != null && row.ageSec > row.timeoutSec) {
+        def kind = (row.protocol == "zigbee") ? "zigbee" : (truthy(row.listening) ? "listening" : "sleepy")
+        def extra = row.nodeState ? " (nodeState=${row.nodeState} is not a ping)" : ""
+        return "Age ${formatAge(row.ageSec)} > ${kind} timeout ${formatAge(row.timeoutSec)}${extra}"
+    }
+    return row.status ?: ""
 }
 
 def persistStatus(devices) {
@@ -487,11 +595,11 @@ def excludeIdSet() {
 }
 
 def deviceKey(protocol, keyId) {
-    return "${protocol}:${keyId}"
+    return "${protocol}:${keyId}".toString()
 }
 
 def buttonKey(protocol, keyId) {
-    return "${protocol}_${keyId}"
+    return "${protocol}_${keyId}".toString()
 }
 
 def pruneSnooze() {
@@ -508,7 +616,7 @@ def pruneSnooze() {
 }
 
 def isSnoozed(key) {
-    def untilMs = state.snooze?."${key}"
+    def untilMs = state.snooze?.get(key?.toString())
     if (untilMs == null) return false
     try {
         return (untilMs as Long) > now()
@@ -518,7 +626,7 @@ def isSnoozed(key) {
 }
 
 def snoozeUntilText(key) {
-    def untilMs = state.snooze?."${key}"
+    def untilMs = state.snooze?.get(key?.toString())
     if (untilMs == null) return ""
     try {
         def ms = untilMs as Long
