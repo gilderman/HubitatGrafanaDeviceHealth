@@ -1,4 +1,4 @@
-# Hubitat Device Health
+# Hubitat Grafana Device Health
 
 Hubitat app that polls **Z-Wave** and **Zigbee** mesh devices, decides if each one is alive or dead, and publishes results to **Grafana Cloud Loki**. It can also send a Hubitat notification when a device newly becomes dead.
 
@@ -6,8 +6,8 @@ LAN and virtual devices are ignored unless they appear in the hub's Z-Wave or Zi
 
 ## Install
 
-1. On the hub: **Apps Code** → **New App** → paste [`apps/HubitatDeviceHealth.groovy`](apps/HubitatDeviceHealth.groovy) → **Save**.
-2. **Apps** → **Add User App** → **Hubitat Device Health**.
+1. On the hub: **Apps Code** → **New App** → paste [`apps/HubitatGrafanaDeviceHealth.groovy`](apps/HubitatGrafanaDeviceHealth.groovy) → **Save**.
+2. **Apps** → **Add User App** → **Hubitat Grafana Device Health**.
 3. Or install via [Hubitat Package Manager](https://hubitatpackagemanager.hubitatcommunity.com/) using this repo's `packageManifest.json`.
 
 ### App settings

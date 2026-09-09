@@ -1,6 +1,6 @@
 # NOTICE
 
-Hubitat Device Health
+Hubitat Grafana Device Health
 Copyright (c) 2026 Ilia Gilderman
 
 This product is original work except where noted below.

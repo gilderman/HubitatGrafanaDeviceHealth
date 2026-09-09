@@ -1,5 +1,5 @@
 /**
- *  Hubitat Device Health
+ *  Hubitat Grafana Device Health
  *
  *  Polls Z-Wave and Zigbee mesh health, pushes Loki log lines, and notifies
  *  when a device newly becomes dead.
@@ -9,7 +9,7 @@
  */
 
 definition(
-    name: "Hubitat Device Health",
+    name: "Hubitat Grafana Device Health",
     namespace: "gilderman",
     author: "Ilia Gilderman",
     description: "Monitors Z-Wave and Zigbee device last-heard times and publishes health to Grafana Cloud Loki",
@@ -17,7 +17,7 @@ definition(
     iconUrl: "",
     iconX2Url: "",
     iconX3Url: "",
-    importUrl: "https://raw.githubusercontent.com/gilderman/HubitatDeviceHealth/refs/heads/main/apps/HubitatDeviceHealth.groovy",
+    importUrl: "https://raw.githubusercontent.com/gilderman/HubitatGrafanaDeviceHealth/refs/heads/main/apps/HubitatGrafanaDeviceHealth.groovy",
     singleInstance: true
 )
 
