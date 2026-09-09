@@ -4,11 +4,43 @@ Hubitat app that polls **Z-Wave** and **Zigbee** mesh devices, decides if each o
 
 LAN and virtual devices are ignored unless they appear in the hub's Z-Wave or Zigbee mesh JSON.
 
+The **app version** is `appVersion()` in the Groovy (`1.0.0`) and the same string in `packageManifest.json`. That is what you compare to GitHub. Hubitat’s internal save token (what `hubitat push` prints as `version=1`) is not a release number.
+
+## Developer lifecycle
+
+**Daily (no version bump)**
+
+1. Edit the Groovy in git.
+2. `hubitat push` from [hubitat-deploy](https://github.com/gilderman/hubitat-deploy) so the hub compiles this file.
+3. Confirm the app page still shows **App version 1.0.0** (or whatever `appVersion()` is).
+4. Commit and push to GitHub when you want the source saved — still the same `1.0.0`.
+
+GitHub `main` and the hub match when that `appVersion()` string is the same **and** you pushed that exact file. If you committed extra changes but did not `hubitat push`, GitHub is ahead.
+
+**Release (bump once)**
+
+1. Change `appVersion()` and `packageManifest.json` `"version"` to the same new string (e.g. `1.0.1`).
+2. Commit, tag `v1.0.1`, push GitHub.
+3. `hubitat push` so the hub app page shows `1.0.1`.
+4. HPM users then see `1.0.1` as the package version.
+
+Do not bump on every save. Bump when you mean “this is a shipped version.”
+
+Check hub vs git with hubitat-deploy (config lives in that repo’s `.hubitat.json`):
+
+```bash
+node path/to/hubitat-deploy/src/cli.js status --cwd path/to/hubitat-deploy apps/HubitatGrafanaDeviceHealth.groovy
+node path/to/hubitat-deploy/src/cli.js diff  --cwd path/to/hubitat-deploy apps/HubitatGrafanaDeviceHealth.groovy
+```
+
+`status` compares `appVersion()`, `packageManifest.json`, and source. Exit code 1 if they differ.
+
 ## Install
 
-1. On the hub: **Apps Code** → **New App** → paste [`apps/HubitatGrafanaDeviceHealth.groovy`](apps/HubitatGrafanaDeviceHealth.groovy) → **Save**.
-2. **Apps** → **Add User App** → **Hubitat Grafana Device Health**.
-3. Or install via [Hubitat Package Manager](https://hubitatpackagemanager.hubitatcommunity.com/) using this repo's `packageManifest.json`.
+1. Prefer [hubitat-deploy](https://github.com/gilderman/hubitat-deploy): `hubitat push apps/HubitatGrafanaDeviceHealth.groovy`.
+2. Or on the hub: **Apps Code** → **New App** → paste [`apps/HubitatGrafanaDeviceHealth.groovy`](apps/HubitatGrafanaDeviceHealth.groovy) → **Save**.
+3. **Apps** → **Add User App** → **Hubitat Grafana Device Health**.
+4. Or install via [Hubitat Package Manager](https://hubitatpackagemanager.hubitatcommunity.com/) using this repo's `packageManifest.json`.
 
 ### App settings
 

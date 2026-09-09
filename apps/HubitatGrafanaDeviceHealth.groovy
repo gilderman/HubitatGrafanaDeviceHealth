@@ -21,6 +21,10 @@ definition(
     singleInstance: true
 )
 
+// Release version. Keep in sync with packageManifest.json. Do not confuse
+// with Hubitat's internal save token (the number hubitat-deploy prints).
+def appVersion() { "1.0.0" }
+
 preferences {
     page(name: "configPage")
     page(name: "statusPage")
@@ -29,6 +33,7 @@ preferences {
 def configPage() {
     dynamicPage(name: "configPage", title: "Device Health", install: true, uninstall: true) {
         section("Status") {
+            paragraph "App version ${appVersion()}"
             href(
                 name: "toStatus",
                 title: "Dead / snoozed devices",
