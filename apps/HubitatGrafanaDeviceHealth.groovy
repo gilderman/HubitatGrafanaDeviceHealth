@@ -54,8 +54,10 @@ def configPage() {
             input "grafanaApiKey", "password",
                 title: "Grafana Cloud API Key/Token",
                 required: false
+            paragraph "Poll interval is how often this app re-reads the hub’s Z-Wave and Zigbee last-heard tables and pushes Loki. It does not ping or refresh devices."
             input "pollIntervalMinutes", "number",
                 title: "Poll interval (minutes)",
+                description: "Default 5. Range 1–60. Not a device ping.",
                 defaultValue: 5,
                 range: "1..60",
                 required: true

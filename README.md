@@ -12,8 +12,9 @@ The **app version** is `appVersion()` in the Groovy (`1.0.0`) and the same strin
 
 1. Edit the Groovy in git.
 2. `hubitat push` from [hubitat-deploy](https://github.com/gilderman/hubitat-deploy) so the hub compiles this file.
-3. Confirm the app page still shows **App version 1.0.0** (or whatever `appVersion()` is).
-4. Commit and push to GitHub when you want the source saved — still the same `1.0.0`.
+3. First time: `hubitat install` (or `hubitat push --install`) so the hub has a running user app, not only Apps Code.
+4. Confirm the app page still shows **App version 1.0.0** (or whatever `appVersion()` is).
+5. Commit and push to GitHub when you want the source saved — still the same `1.0.0`.
 
 GitHub `main` and the hub match when that `appVersion()` string is the same **and** you pushed that exact file. If you committed extra changes but did not `hubitat push`, GitHub is ahead.
 
@@ -45,9 +46,9 @@ node path/to/hubitat-deploy/src/cli.js test --cwd path/to/HubitatGrafanaDeviceHe
 
 ## Install
 
-1. Prefer [hubitat-deploy](https://github.com/gilderman/hubitat-deploy): `hubitat push apps/HubitatGrafanaDeviceHealth.groovy`.
+1. Prefer [hubitat-deploy](https://github.com/gilderman/hubitat-deploy): `hubitat push --install apps/HubitatGrafanaDeviceHealth.groovy`.
 2. Or on the hub: **Apps Code** → **New App** → paste [`apps/HubitatGrafanaDeviceHealth.groovy`](apps/HubitatGrafanaDeviceHealth.groovy) → **Save**.
-3. **Apps** → **Add User App** → **Hubitat Grafana Device Health**.
+3. Then **Apps → Add User App**, or `hubitat install` if the code is already on the hub. Open the app once and click **Done** after filling Loki settings.
 4. Or install via [Hubitat Package Manager](https://hubitatpackagemanager.hubitatcommunity.com/) using this repo's `packageManifest.json`.
 
 ### App settings
@@ -56,7 +57,7 @@ node path/to/hubitat-deploy/src/cli.js test --cwd path/to/HubitatGrafanaDeviceHe
 |---|---|---|
 | Loki push URL | — | Grafana Cloud `/loki/api/v1/push` |
 | Grafana instance ID + API key | — | Basic auth for Loki |
-| Poll interval | 5 minutes | How often mesh health is checked |
+| Poll interval | 5 minutes | How often hub last-heard tables are re-read and sent to Loki. Does not ping devices. |
 | Listening Z-Wave timeout | 4 hours | Always-on / mains Z-Wave |
 | Sleepy / battery Z-Wave timeout | 36 hours | Non-listening Z-Wave |
 | Zigbee timeout | 24 hours | All Zigbee devices |
