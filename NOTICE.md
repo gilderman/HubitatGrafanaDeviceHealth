@@ -29,5 +29,12 @@ https://github.com/gilderman/HubitatGrafana
 That file was not copied. Device health reimplements the push for
 `job=hubitat_device_health` and `job=hubitat_device_health_summary`.
 
+## hubitat_ci (test-time library)
+
+Local `hubitat test` compiles the app with
+[biocomp/hubitat_ci](https://github.com/biocomp/hubitat_ci)
+(Copyright 2019 Artem Tokmakov, Apache 2.0). Specs are in `tests/`;
+the library is not vendored in this repository.
+
 Hubitat® is a trademark of Hubitat, Inc. This project is not
 affiliated with or endorsed by Hubitat.

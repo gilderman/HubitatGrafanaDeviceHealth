@@ -35,6 +35,14 @@ node path/to/hubitat-deploy/src/cli.js diff  --cwd path/to/hubitat-deploy apps/H
 
 `status` compares `appVersion()`, `packageManifest.json`, and source. Exit code 1 if they differ.
 
+## Tests
+
+Specs for **this app** are in [`tests/src/test/groovy`](tests/src/test/groovy). The Gradle runner and hubitat_ci library are not in this repo.
+
+```bash
+node path/to/hubitat-deploy/src/cli.js test --cwd path/to/HubitatGrafanaDeviceHealth
+```
+
 ## Install
 
 1. Prefer [hubitat-deploy](https://github.com/gilderman/hubitat-deploy): `hubitat push apps/HubitatGrafanaDeviceHealth.groovy`.
